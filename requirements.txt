@@ -1,0 +1,5 @@
+--extra-index-url https://pypi.org/simple
+--index-url https://download.pytorch.org/whl/cu118
+numpy==1.26.4
+torch==2.1.2
+transformers==4.38.2
