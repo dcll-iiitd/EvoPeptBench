@@ -223,21 +223,21 @@ def load_tasks(path: str) -> List[PeptideTask]:
 # SECTION 3 — MODEL (BioGPT-Large, CPU)
 # =============================================================================
 
-def _load_model(model_path: str):
+def _load_model(model_name: str):
     try:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
     except ImportError:
         raise ImportError("Run:  pip install transformers torch")
 
-    print(f"  Loading '{model_path}' …", flush=True)
-    tok = AutoTokenizer.from_pretrained(model_path)
+    print(f"  Loading '{model_name}' …", flush=True)
+    tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     tok.padding_side = "left"
 
     import torch
-    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float32)
+    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32, trust_remote_code=True)
     model.eval()
     torch.set_num_threads(os.cpu_count() or 1)
     print(f"  Model loaded (threads={torch.get_num_threads()}).", flush=True)
@@ -448,9 +448,9 @@ class PeptideBenchMBPP:
         results = _parallel_score(jobs, self.pass_threshold, self.n_workers)
         return results, self._aggregate(results)
 
-    def evaluate(self, model_path: str = DEFAULT_MODEL_ID
+    def evaluate(self, model_name: str = DEFAULT_MODEL_ID
                  ) -> Tuple[List[TaskResult], AggregateResult]:
-        mt    = _load_model(model_path)
+        mt    = _load_model(model_name)
         n     = len(self.tasks)
         all_r: List[TaskResult] = []
         pend:  List[tuple]      = []
@@ -590,7 +590,8 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--tasks",          required=True)
-    p.add_argument("--model-path",     default=DEFAULT_MODEL_ID)
+    p.add_argument("--model_name",     default=DEFAULT_MODEL_ID,
+                   help="HuggingFace model string (e.g., mistralai/Mistral-7B, microsoft/BioGPT-Large)")
     p.add_argument("--mode",           default="WITH_LENGTH",
                    choices=["WITH_LENGTH","WITHOUT_LENGTH"])
     p.add_argument("--k",              type=int,   default=DEFAULT_K)
@@ -624,9 +625,9 @@ def main() -> None:
         results, agg = harness.evaluate_dry_run()
         model_name = "dry-run"
     else:
-        print(f"\nRunning (model={args.model_path}, mode={args.mode}, k={args.k})\n")
-        results, agg = harness.evaluate(model_path=args.model_path)
-        model_name = args.model_path
+        print(f"\nRunning (model={args.model_name}, mode={args.mode}, k={args.k})\n")
+        results, agg = harness.evaluate(model_name=args.model_name)
+        model_name = args.model_name
 
     print()
     print_results(results, agg, model=model_name)

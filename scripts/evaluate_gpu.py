@@ -2,11 +2,11 @@
 PeptideBench-MBPP — GPU Inference Script (single V100)
 =======================================================
 Scorer  : peptide.py (PeptideBLEU) — no dependency on peptide_bench.py.
-Model   : microsoft/BioGPT-Large loaded in float16 on cuda:0.
+Model   : Dynamic model loader (supports any causal HF model like BioGPT, Mistral, Llama).
 
 Key differences vs the CPU script
 ----------------------------------
-  1. BioGPT-Large loaded in float16 on cuda:0 (~750 MB VRAM).
+  1. Dynamic HuggingFace model loading on cuda:0 with configurable dtype.
   2. Batched generation — gpu_batch_size tasks are processed in one
      model.generate() call, saturating V100 tensor cores.
   3. Scoring is parallelized across CPU cores (multiprocessing.Pool)
@@ -81,8 +81,8 @@ except ImportError as exc:
 # SECTION 1 — GPU MODEL LOADER
 # =============================================================================
 
-def load_model_gpu(model_path: str):
-    """Load BioGPT-Large in float16 on cuda:0. Returns (model, tokenizer, device)."""
+def load_model_gpu(model_name: str, dtype_str: str = "float32"):
+    """Load a HuggingFace Causal LM on cuda:0. Returns (model, tokenizer, device)."""
     try:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -92,23 +92,32 @@ def load_model_gpu(model_path: str):
     if not torch.cuda.is_available():
         raise RuntimeError(
             "No CUDA device found.\n"
-            "Use peptide_bench_mbpp.py for CPU inference."
+            "Use evaluate_cpu.py for CPU inference."
         )
 
     device   = torch.device("cuda:0")
     gpu_name = torch.cuda.get_device_name(0)
     vram_gb  = torch.cuda.get_device_properties(0).total_memory / 1e9
 
-    print(f"  GPU : {gpu_name}  ({vram_gb:.1f} GB VRAM)", flush=True)
-    print(f"  Loading '{model_path}' in float32 …", flush=True)
+    print(f"  System : {gpu_name}  ({vram_gb:.1f} GB VRAM)", flush=True)
+    print(f"  Loading model '{model_name}' on {device} (dtype={dtype_str}) ...", flush=True)
 
-    tok = AutoTokenizer.from_pretrained(model_path)
+    # Determine optimal dtype implicitly from Transformers or fallback
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+        "auto": "auto"
+    }
+    torch_dtype = dtype_map.get(dtype_str, torch.float32)
+
+    tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     tok.padding_side = "left"   # left-pad for causal batched generation
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=torch.float32
+        model_name, torch_dtype=torch_dtype, trust_remote_code=True
     ).to(device)
     model.eval()
 
@@ -230,14 +239,14 @@ class PeptideBenchMBPP_GPU:
         return results, self._cpu._aggregate(results)
 
     def evaluate(
-        self, model_path: str = DEFAULT_MODEL_ID
+        self, model_name: str = DEFAULT_MODEL_ID, dtype_str: str = "float32"
     ) -> Tuple[List[TaskResult], AggregateResult]:
         """
         Batched GPU generation + parallel CPU scoring.
         GPU generates gpu_batch_size tasks at once; CPU pool scores them
         concurrently while the GPU processes the next batch.
         """
-        model, tok, device = load_model_gpu(model_path)
+        model, tok, device = load_model_gpu(model_name, dtype_str)
         n_tasks = len(self.tasks)
         all_r:  List[TaskResult] = []
 
@@ -302,7 +311,11 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--tasks",          required=True)
-    p.add_argument("--model-path",     default=DEFAULT_MODEL_ID)
+    p.add_argument("--model_name",     default=DEFAULT_MODEL_ID,
+                   help="HuggingFace model string (e.g., microsoft/BioGPT-Large, mistralai/Mistral-7B-v0.1)")
+    p.add_argument("--dtype",          default="float32",
+                   choices=["float32", "float16", "bfloat16", "auto"],
+                   help="Model data type to load on GPU")
     p.add_argument("--mode",           default="WITH_LENGTH",
                    choices=["WITH_LENGTH","WITHOUT_LENGTH"])
     p.add_argument("--k",              type=int,   default=DEFAULT_K)
@@ -344,17 +357,19 @@ def main() -> None:
         print("\n[DRY-RUN] Skipping GPU, using dummy sequences.\n")
         results, agg = harness.evaluate_dry_run()
         model_name = "dry-run"
+        dtype_str = "N/A"
     else:
-        print(f"\nRunning GPU evaluation  (model={args.model_path}, mode={args.mode})\n")
-        results, agg = harness.evaluate(model_path=args.model_path)
-        model_name = args.model_path
+        print(f"\nRunning GPU evaluation  (model={args.model_name}, dtype={args.dtype}, mode={args.mode})\n")
+        results, agg = harness.evaluate(model_name=args.model_name, dtype_str=args.dtype)
+        model_name = args.model_name
+        dtype_str = args.dtype
 
     print()
-    print_results(results, agg, model=f"{model_name} [GPU fp16]")
+    print_results(results, agg, model=f"{model_name} [GPU {dtype_str}]")
 
     if args.out:
         save_results(results, agg, args.out,
-                     model=f"{model_name} [GPU fp16]", mode=args.mode)
+                     model=f"{model_name} [GPU {dtype_str}]", mode=args.mode)
 
 
 if __name__ == "__main__":

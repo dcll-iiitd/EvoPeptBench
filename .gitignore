@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+venv/
+# Only uncomment the below if your CSV is larger than 100MB (GitHub's limit)
+# data/raw/peptides.csv
