@@ -21,11 +21,13 @@ This strictly enforces:
 ## Run Evaluation
 
 ### GPU Evaluation (Recommended)
-You can run evaluation on a GPU device explicitly using `CUDA_VISIBLE_DEVICES`. The following runs the evaluation in batched mode on a single GPU. Note that your tasks dataset is now located under `data/processed/`.
+You can run evaluation on a GPU device explicitly using `CUDA_VISIBLE_DEVICES`. The following runs the evaluation in batched mode on a single GPU. Note that your tasks dataset is now located under `data/processed/`. You can also configure the evaluation for different HuggingFace models using `--model_name` and target a specific precision using `--dtype`.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/evaluate_gpu.py \
     --tasks data/processed/peptides_with_length.jsonl \
+    --model_name "microsoft/BioGPT-Large" \
+    --dtype "float32" \
     --mode WITH_LENGTH \
     --k 5 \
     --gpu-batch-size 64 \
@@ -38,6 +40,7 @@ For debugging or environments without a GPU, run the CPU-only evaluation script:
 ```bash
 python scripts/evaluate_cpu.py \
     --tasks data/processed/peptides_with_length.jsonl \
+    --model_name "microsoft/BioGPT-Large" \
     --mode WITH_LENGTH \
     --k 5 \
     --out results_cpu.json
